@@ -34,7 +34,11 @@ install_packages() {
   apt update
   DEBIAN_FRONTEND=noninteractive apt install -y wireguard nftables unbound adguardhome tc iproute2 qrencode nginx curl
   mkdir -p "$PEERS_DIR" "$BACKUP_DIR" "$LANDING_DIR" "/etc/nftables"
-  touch "$MANUAL_BLACKLIST_FILE" "$GEO_BLACKLIST_FILE"
+  touch "$MANUAL_BLACKLIST_FILE" "$GEO_BLACKLIST_FILE" "$PEERS_DIR/metadata.csv"
+  # IP-Forwarding dauerhaft aktivieren
+  echo 'net.ipv4.ip_forward=1' >/etc/sysctl.d/99-vpn-forward.conf
+  echo 'net.ipv6.conf.all.forwarding=1' >>/etc/sysctl.d/99-vpn-forward.conf
+  sysctl -p /etc/sysctl.d/99-vpn-forward.conf
 }
 
 # --- WireGuard konfigurieren ---
@@ -45,6 +49,11 @@ Address = ${VPN_IPV4}/26, ${WG_IPV6_BASE}::1/64
 ListenPort = 51820
 SaveConfig = true
 PrivateKey = $(wg genkey)
+PostUp = nft -f /etc/nftables.conf
+PostUp = sysctl -w net.ipv4.ip_forward=1 net.ipv6.conf.all.forwarding=1
+PostUp = iptables -t nat -A POSTROUTING -o ${HOST_IFACE} -j MASQUERADE
+PostUp = /usr/local/bin/configure_tc.sh
+PostDown = iptables -t nat -D POSTROUTING -o ${HOST_IFACE} -j MASQUERADE
 EOF
   systemctl enable wg-quick@${WG_IFACE}
   wg-quick up ${WG_IFACE}
@@ -95,6 +104,9 @@ flush ruleset
 table ip nat {
   chain prerouting { type nat hook prerouting priority 0; policy accept;
     include "$EXPIRY_NFT_FILE"
+  }
+  chain postrouting { type nat hook postrouting priority 100; policy accept;
+    oifname "$HOST_IFACE" masquerade
   }
 }
 
@@ -162,6 +174,12 @@ configure_tc() {
       tc filter add dev ${WG_IFACE} protocol ip parent 1: prio 1 handle "$mark" fw flowid 1:"$mark"
     fi
   done
+  cat > /usr/local/bin/configure_tc.sh <<'EOF'
+#!/usr/bin/env bash
+$(declare -f configure_tc)
+configure_tc
+EOF
+  chmod +x /usr/local/bin/configure_tc.sh
 }
 
 # --- Landingpage für abgelaufene Peers ---
@@ -174,9 +192,13 @@ configure_landingpage() {
 </body></html>
 EOF
   cat > /etc/nginx/sites-available/expired <<EOF
-server { listen 80; root ${LANDING_DIR}; }
+server {
+    listen ${VPN_IPV4}:80;
+    root ${LANDING_DIR};
+}
 EOF
   ln -sf /etc/nginx/sites-available/expired /etc/nginx/sites-enabled/expired
+  rm -f /etc/nginx/sites-enabled/default
   systemctl restart nginx
 }
 
@@ -186,7 +208,10 @@ configure_backup_scripts() {
 #!/usr/bin/env bash
 DEST="${BACKUP_DIR}/backup_$(date +%F_%H%M).tar.gz"
 tar czf "$DEST" \
-  /etc/wireguard /etc/wireguard/peers /etc/unbound /etc/AdGuardHome /etc/nftables.conf /etc/nftables/geo_blacklist.conf /etc/nftables/groups.conf /etc/nftables/expiry_blacklist.conf /etc/nginx/sites-available/expired
+  /etc/wireguard /etc/wireguard/peers /etc/unbound \
+  /etc/AdGuardHome /var/lib/AdGuardHome \
+  /etc/nftables.conf /etc/nftables/geo_blacklist.conf /etc/nftables/groups.conf \
+  /etc/nftables/expiry_blacklist.conf /etc/nginx/sites-available/expired
 echo "Backup gespeichert: $DEST"
 EOF
   chmod +x /usr/local/bin/backup_vpn.sh
@@ -195,6 +220,7 @@ EOF
 [ -f "$1" ] || { echo "Backup nicht gefunden"; exit 1; }
 tar xzf "$1" -C /
 systemctl restart wg-quick@${WG_IFACE} unbound AdGuardHome nftables nginx
+/usr/local/bin/configure_tc.sh
 echo "Restore abgeschlossen"
 EOF
   chmod +x /usr/local/bin/restore_vpn.sh
@@ -216,19 +242,13 @@ EOF
 #!/usr/bin/env bash
 # Erzeuge dnat-Regeln für abgelaufene Peers
 EXP_FILE="${EXPIRY_NFT_FILE}"
-cat > "$EXP_FILE" <<EOH
-# dnat-Regeln für abgelaufene Peers
-table ip nat {
-  chain prerouting { type nat hook prerouting priority 0; policy accept;
-EOH
+: > "$EXP_FILE"
 today=$(date +%Y-%m-%d)
 while IFS='|' read -r name grp ip4 ip6 expires; do
   if [[ "$expires" < "$today" ]]; then
-    echo "    ip saddr $ip4 dnat to $VPN_IPV4:80" >> "$EXP_FILE"
+    echo "ip saddr $ip4 dnat to $VPN_IPV4:80" >> "$EXP_FILE"
   fi
 done < "$PEERS_DIR/metadata.csv"
-echo "  }" >> "$EXP_FILE"
-echo "}" >> "$EXP_FILE"
 # Reload nftables only NAT table
 nft -f /etc/nftables.conf
 EOF
