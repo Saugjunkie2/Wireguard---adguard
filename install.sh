@@ -31,8 +31,8 @@ exec > >(tee -a "$LOGFILE") 2>&1
 
 # --- Paketinstallation ---
 install_packages() {
-  apt update
-  DEBIAN_FRONTEND=noninteractive apt install -y wireguard nftables unbound adguardhome tc iproute2 qrencode nginx curl
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard nftables unbound adguardhome tc iproute2 qrencode nginx curl
   mkdir -p "$PEERS_DIR" "$BACKUP_DIR" "$LANDING_DIR" "/etc/nftables"
   touch "$MANUAL_BLACKLIST_FILE" "$GEO_BLACKLIST_FILE" "$PEERS_DIR/metadata.csv"
   # IP-Forwarding dauerhaft aktivieren
