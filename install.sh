@@ -26,6 +26,7 @@ MANUAL_BLACKLIST_FILE="/etc/AdGuardHome/manual_blacklist.txt"
 GEO_BLACKLIST_FILE="/etc/nftables/geo_blacklist.conf"
 EXPIRY_NFT_FILE="/etc/nftables/expiry_blacklist.conf"
 
+mkdir -p "$(dirname "$LOGFILE")"
 exec > >(tee -a "$LOGFILE") 2>&1
 
 # --- Paketinstallation ---
@@ -103,7 +104,7 @@ table inet vpn {
   chain output { type filter hook output priority 0; policy drop; }
   chain forward { type filter hook forward priority 0; policy accept; }
   # Kill-Switch
-  iifname "${WG_IFACE}" accept
+  oifname "${WG_IFACE}" accept
   # DNS-Zwang
   tcp dport 53 redirect to :${ADGUARD_DNS_PORT}
   udp dport 53 redirect to :${ADGUARD_DNS_PORT}
@@ -157,8 +158,8 @@ configure_tc() {
     speed=${GROUP_SPEED[$grp]}
     mark=$(case $grp in guest) echo 1;; member) echo 2;; vip) echo 3;; admin) echo 4;; esac)
     if [[ $speed -gt 0 ]]; then
-      tc class add dev ${WG_IFACE} parent 1: classid 1:$mark htb rate ${speed}mbit ceil ${speed}mbit burst 15k
-      tc filter add dev ${WG_IFACE} protocol ip parent 1: prio 1 handle $mark fw flowid 1:$mark
+      tc class add dev ${WG_IFACE} parent 1: classid 1:"$mark" htb rate "${speed}"mbit ceil "${speed}"mbit burst 15k
+      tc filter add dev ${WG_IFACE} protocol ip parent 1: prio 1 handle "$mark" fw flowid 1:"$mark"
     fi
   done
 }
@@ -181,7 +182,7 @@ EOF
 
 # --- Backup & Restore Skripte ---
 configure_backup_scripts() {
-  cat > /usr/local/bin/backup_vpn.sh <<'EOF'
+  cat > /usr/local/bin/backup_vpn.sh <<EOF
 #!/usr/bin/env bash
 DEST="${BACKUP_DIR}/backup_$(date +%F_%H%M).tar.gz"
 tar czf "$DEST" \
@@ -189,7 +190,7 @@ tar czf "$DEST" \
 echo "Backup gespeichert: $DEST"
 EOF
   chmod +x /usr/local/bin/backup_vpn.sh
-  cat > /usr/local/bin/restore_vpn.sh <<'EOF'
+  cat > /usr/local/bin/restore_vpn.sh <<EOF
 #!/usr/bin/env bash
 [ -f "$1" ] || { echo "Backup nicht gefunden"; exit 1; }
 tar xzf "$1" -C /
@@ -211,7 +212,7 @@ EOF
   chmod +x /usr/local/bin/quota_reset.sh
 
   # Ablauf-Check
-  cat > /usr/local/bin/expiry_check.sh <<'EOF'
+  cat > /usr/local/bin/expiry_check.sh <<EOF
 #!/usr/bin/env bash
 # Erzeuge dnat-Regeln für abgelaufene Peers
 EXP_FILE="${EXPIRY_NFT_FILE}"
@@ -241,7 +242,7 @@ EOF
 # --- Peer Management ---
 create_peer() {
   read -p "Peer-Name: " peer_name
-  echo "Gruppen: ${!GROUP_NETS[@]}"
+  echo "Gruppen: ${!GROUP_NETS[*]}"
   read -p "Gruppe: " grp
   [[ -z "${GROUP_NETS[$grp]:-}" ]] && { echo "Ungültige Gruppe"; return; }
   read -p "Ablaufdatum (YYYY-MM-DD): " expires
@@ -266,7 +267,7 @@ AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
 EOF
   # aktivieren
-  wg set $WG_IFACE peer $pub preshared-key <(echo "$psk") allowed-ips $ip4/32,$ip6/128
+  wg set "$WG_IFACE" peer "$pub" preshared-key <(echo "$psk") allowed-ips "$ip4"/32,"$ip6"/128
   wg-quick save $WG_IFACE
   qrencode -t ansiutf8 < "$conf"
   echo "$peer_name|$grp|$ip4|$ip6|$expires" >> $PEERS_DIR/metadata.csv
