@@ -4,7 +4,8 @@
 set -euo pipefail
 
 # --- Standard-Parameter (anpassbar im Menü) ---
-HOST_IFACE="eth0"
+# Netzwerk-Interface automatisch ermitteln (Standard-Route)
+HOST_IFACE="$(ip -4 route show default | awk '/default/ {print $5; exit}')"
 WG_IFACE="wg0"
 WG_IPV4_BASE="10.66.66"
 WG_IPV6_BASE="fd00:dead:beef"
