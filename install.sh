@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # --- Standard-Parameter (anpassbar im Menü) ---
-HOST_IFACE="eth0"
+HOST_IFACE="ens18"
 WG_IFACE="wg0"
 WG_IPV4_BASE="10.66.66"
 WG_IPV6_BASE="fd00:dead:beef"
@@ -32,7 +32,21 @@ exec > >(tee -a "$LOGFILE") 2>&1
 # --- Paketinstallation ---
 install_packages() {
   apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard nftables unbound adguardhome tc iproute2 qrencode nginx curl
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    wireguard nftables unbound iproute2 qrencode nginx curl
+
+  # AdGuard Home herunterladen & installieren
+  AGH_VER=$(curl -s https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest \
+    | grep -Po '"tag_name": "\K.*?(?=")')
+  AGH_TAR="AdGuardHome_${AGH_VER#v}_linux_amd64.tar.gz"
+  wget -O "/tmp/$AGH_TAR" "https://github.com/AdguardTeam/AdGuardHome/releases/download/$AGH_VER/$AGH_TAR"
+  tar xzf "/tmp/$AGH_TAR" -C /opt
+  /opt/AdGuardHome/AdGuardHome -s install
+  systemctl enable AdGuardHome
+  systemctl start  AdGuardHome
+  rm "/tmp/$AGH_TAR"
+
+  # Verzeichnisse & Dateien anlegen
   mkdir -p "$PEERS_DIR" "$BACKUP_DIR" "$LANDING_DIR" "/etc/nftables"
   touch "$MANUAL_BLACKLIST_FILE" "$GEO_BLACKLIST_FILE" "$PEERS_DIR/metadata.csv"
   # IP-Forwarding dauerhaft aktivieren
