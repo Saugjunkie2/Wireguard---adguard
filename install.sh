@@ -3,7 +3,7 @@
 # Inklusive interaktivem Menü für alle Konzept-Funktionen
 set -euo pipefail
 
-# --- Standard-Parameter (können im Menü angepasst werden) ---
+# --- Standard-Parameter (anpassbar im Menü) ---
 HOST_IFACE="eth0"
 WG_IFACE="wg0"
 WG_IPV4_BASE="10.66.66"
@@ -24,14 +24,14 @@ LOGFILE="/var/log/vpn_installer.log"
 PEERS_DIR="/etc/wireguard/peers"
 MANUAL_BLACKLIST_FILE="/etc/AdGuardHome/manual_blacklist.txt"
 GEO_BLACKLIST_FILE="/etc/nftables/geo_blacklist.conf"
-EXPIRED_CONF="/etc/nftables/expired.conf"
+EXPIRY_NFT_FILE="/etc/nftables/expiry_blacklist.conf"
 
 exec > >(tee -a "$LOGFILE") 2>&1
 
 # --- Paketinstallation ---
 install_packages() {
   apt update
-  apt install -y wireguard nftables unbound adguardhome tc iproute2 qrencode nginx curl
+  DEBIAN_FRONTEND=noninteractive apt install -y wireguard nftables unbound adguardhome tc iproute2 qrencode nginx curl
   mkdir -p "$PEERS_DIR" "$BACKUP_DIR" "$LANDING_DIR" "/etc/nftables"
   touch "$MANUAL_BLACKLIST_FILE" "$GEO_BLACKLIST_FILE"
 }
@@ -67,10 +67,10 @@ EOF
 
 # --- AdGuard Home konfigurieren ---
 configure_adguard() {
-  # UI und DNS nur über VPN bind
+  # UI und DNS nur über VPN binden
   sed -i "s|^bind_host:.*|bind_host: ${VPN_IPV4}|" /etc/AdGuardHome/AdGuardHome.yaml
   sed -i "s|^bind_port:.*|bind_port: ${ADGUARD_UI_PORT}|" /etc/AdGuardHome/AdGuardHome.yaml
-  # DNS-Blocklisten + Manual Blacklist
+  # DNS-Server
   sed -i '/^dns:/,/^  upstream_dns:/d' /etc/AdGuardHome/AdGuardHome.yaml
   cat >> /etc/AdGuardHome/AdGuardHome.yaml <<EOF
 dns:
@@ -79,82 +79,77 @@ dns:
   port: ${ADGUARD_DNS_PORT}
   upstream_dns:
     - 127.0.0.1#${UNBOUND_PORT}
-  blocking_settings:
-    blocked_services: []
-  client_blocklist: ${MANUAL_BLACKLIST_FILE}
 EOF
   systemctl enable AdGuardHome
   systemctl restart AdGuardHome
 }
 
-# --- nftables-Regeln einrichten ---
+# --- nftables-Regeln ---
 configure_nftables() {
   cat > /etc/nftables.conf <<EOF
 #!/usr/sbin/nft -f
 flush ruleset
 
+# NAT-Tabelle für Ablauf/Expiry
+table ip nat {
+  chain prerouting { type nat hook prerouting priority 0; policy accept;
+    include "$EXPIRY_NFT_FILE"
+  }
+}
+
+# Haupt-Tabelle für VPN-Sicherheit
 table inet vpn {
+  chain input { type filter hook input priority 0; policy accept; }
+  chain output { type filter hook output priority 0; policy drop; }
+  chain forward { type filter hook forward priority 0; policy accept; }
+  # Kill-Switch
+  iifname "${WG_IFACE}" accept
+  # DNS-Zwang
+  tcp dport 53 redirect to :${ADGUARD_DNS_PORT}
+  udp dport 53 redirect to :${ADGUARD_DNS_PORT}
+  # Geo-IP Blacklist
+  include "$GEO_BLACKLIST_FILE"
+  # Gruppen-Markierung, Isolation & Quota
   include "/etc/nftables/groups.conf"
-  include "$EXPIRED_CONF"
-  chain prerouting {
-    type nat hook prerouting priority -100; policy accept;
-    tcp dport 53 redirect to :${ADGUARD_DNS_PORT}
-    udp dport 53 redirect to :${ADGUARD_DNS_PORT}
-  }
-
-  chain input {
-    type filter hook input priority 0; policy accept;
-  }
-
-  chain forward {
-    type filter hook forward priority 0; policy accept;
-    jump group_rules
-    jump expired
-    include "/etc/nftables/geo_blacklist.conf"
-  }
-
-  chain output {
-    type filter hook output priority 0; policy drop;
-    oifname "${WG_IFACE}" accept
-    oifname "lo" accept
-  }
 }
 EOF
-  # Generiere geo_blacklist.conf (leer oder per Hand befüllbar)
+
+  # Geo-IP Blacklist (leer)
   cat > "$GEO_BLACKLIST_FILE" <<EOF
-# Trage hier IP-/CIDR-Blöcke ein, die gesperrt werden sollen (Blacklist)
+# Hier CIDR-Blöcke eintragen, die gesperrt werden sollen
 EOF
-  # Datei für abgelaufene Peers
-  cat > "$EXPIRED_CONF" <<EOF
-set expired_peers { type ipv4_addr; }
 
-chain expired {
-  ip saddr @expired_peers tcp dport 80 accept
-  ip saddr @expired_peers counter drop
-}
-EOF
-  # Generiere groups.conf basierend auf Arrays
+  # Gruppen.conf generieren
   cat > /etc/nftables/groups.conf <<EOF
-chain group_rules {
+# Gruppe: Markierung, Isolation, Quota
 EOF
   for grp in "${!GROUP_NETS[@]}"; do
-    base4="${WG_IPV4_BASE}.${GROUP_NETS[$grp]%%/*}"
+    cidr="${GROUP_NETS[$grp]}"
+    base4="${WG_IPV4_BASE}.${cidr%%/*}"
+    # Markierung für QoS
+    mark=$(case $grp in guest) echo 1;; member) echo 2;; vip) echo 3;; admin) echo 4;; esac)
+    echo "    ip saddr $base4/26 meta mark set $mark" >> /etc/nftables/groups.conf
+    # Isolation gegen andere Gruppen
     for other in "${!GROUP_NETS[@]}"; do
       [[ "$other" == "$grp" ]] && continue
       other4="${WG_IPV4_BASE}.${GROUP_NETS[$other]%%/*}"
-      echo "  ip saddr $base4/26 ip daddr $other4/26 drop" >> /etc/nftables/groups.conf
+      echo "    ip saddr $base4/26 ip daddr $other4/26 drop" >> /etc/nftables/groups.conf
     done
+    # Quota-Regel
     quota=${GROUP_QUOTA[$grp]}
-    if [[ $quota -gt 0 ]]; then
-      echo "  ip saddr $base4/26 quota $quota drop" >> /etc/nftables/groups.conf
-    fi
+    [[ $quota -gt 0 ]] && echo "    ip saddr $base4/26 quota $quota drop" >> /etc/nftables/groups.conf
   done
-  echo "}" >> /etc/nftables/groups.conf
+
+  # Expiry-Datei initial leer
+  cat > "$EXPIRY_NFT_FILE" <<EOF
+# Generiert von expiry_check.sh, dnat-Regeln für abgelaufene Peers
+EOF
+
   systemctl enable nftables
   systemctl restart nftables
 }
 
-# --- Traffic-Shaping konfigurieren ---
+# --- Traffic-Shaping (tc) ---
 configure_tc() {
   tc qdisc del dev ${WG_IFACE} root 2>/dev/null || true
   tc qdisc add dev ${WG_IFACE} root handle 1: htb default 999
@@ -174,7 +169,7 @@ configure_landingpage() {
 <html><body>
 <h1>VPN-Zugang abgelaufen</h1>
 <p>Ihr Gratis-Jahr ist beendet.</p>
-<p>Kontaktieren Sie den Support zur Verlängerung.</p>
+<p>Kontaktieren Sie den Support für Verlängerung.</p>
 </body></html>
 EOF
   cat > /etc/nginx/sites-available/expired <<EOF
@@ -186,19 +181,17 @@ EOF
 
 # --- Backup & Restore Skripte ---
 configure_backup_scripts() {
-  cat > /usr/local/bin/backup_vpn.sh <<EOF
+  cat > /usr/local/bin/backup_vpn.sh <<'EOF'
 #!/usr/bin/env bash
-# Ad-hoc Backup
 DEST="${BACKUP_DIR}/backup_$(date +%F_%H%M).tar.gz"
 tar czf "$DEST" \
-  /etc/wireguard /etc/unbound /etc/AdGuardHome /etc/nftables.conf /etc/nftables/geo_blacklist.conf /etc/nftables/groups.conf /etc/nginx/sites-available/expired
+  /etc/wireguard /etc/wireguard/peers /etc/unbound /etc/AdGuardHome /etc/nftables.conf /etc/nftables/geo_blacklist.conf /etc/nftables/groups.conf /etc/nftables/expiry_blacklist.conf /etc/nginx/sites-available/expired
 echo "Backup gespeichert: $DEST"
 EOF
   chmod +x /usr/local/bin/backup_vpn.sh
-  cat > /usr/local/bin/restore_vpn.sh <<EOF
+  cat > /usr/local/bin/restore_vpn.sh <<'EOF'
 #!/usr/bin/env bash
-# Restore Backup
-[ -f "$1" ] || { echo "Backup-Datei nicht gefunden"; exit 1; }
+[ -f "$1" ] || { echo "Backup nicht gefunden"; exit 1; }
 tar xzf "$1" -C /
 systemctl restart wg-quick@${WG_IFACE} unbound AdGuardHome nftables nginx
 echo "Restore abgeschlossen"
@@ -206,75 +199,43 @@ EOF
   chmod +x /usr/local/bin/restore_vpn.sh
 }
 
-# --- Timer und Hilfsskripte ---
-configure_timers() {
-  cat > /usr/local/bin/check_expired_peers.sh <<'EOS'
+# --- Timer-Skripte für Quota-Reset & Ablauf-Check ---
+configure_timer_scripts() {
+  # Quota-Reset
+  cat > /usr/local/bin/quota_reset.sh <<'EOF'
 #!/usr/bin/env bash
-set -euo pipefail
-meta="$PEERS_DIR/metadata.csv"
-today=$(date +%s)
-nft list set inet vpn expired_peers >/dev/null 2>&1 || nft add set inet vpn expired_peers { type ipv4_addr; }
-nft flush set inet vpn expired_peers
-while IFS='|' read -r name grp ip4 ip6 exp; do
-  [[ -z "$exp" ]] && continue
-  ts=$(date -d "$exp" +%s || echo 0)
-  if [[ $ts -lt $today ]]; then
-    nft add element inet vpn expired_peers { $ip4 }
-  fi
-done < "$meta"
-EOS
-  chmod +x /usr/local/bin/check_expired_peers.sh
-
-  cat > /usr/local/bin/reset_quotas.sh <<'EOS'
-#!/usr/bin/env bash
-set -euo pipefail
+# Quotas zurücksetzen durch Neubau der nft-Regeln
+nft flush table inet vpn
 nft -f /etc/nftables.conf
-EOS
-  chmod +x /usr/local/bin/reset_quotas.sh
-
-  cat > /etc/systemd/system/peer-expire.service <<EOF
-[Unit]
-Description=Check expired VPN peers
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/check_expired_peers.sh
 EOF
+  chmod +x /usr/local/bin/quota_reset.sh
 
-  cat > /etc/systemd/system/peer-expire.timer <<EOF
-[Unit]
-Description=Daily check for expired VPN peers
-
-[Timer]
-OnCalendar=daily
-Persistent=true
-
-[Install]
-WantedBy=timers.target
+  # Ablauf-Check
+  cat > /usr/local/bin/expiry_check.sh <<'EOF'
+#!/usr/bin/env bash
+# Erzeuge dnat-Regeln für abgelaufene Peers
+EXP_FILE="${EXPIRY_NFT_FILE}"
+cat > "$EXP_FILE" <<EOH
+# dnat-Regeln für abgelaufene Peers
+table ip nat {
+  chain prerouting { type nat hook prerouting priority 0; policy accept;
+EOH
+today=$(date +%Y-%m-%d)
+while IFS='|' read -r name grp ip4 ip6 expires; do
+  if [[ "$expires" < "$today" ]]; then
+    echo "    ip saddr $ip4 dnat to $VPN_IPV4:80" >> "$EXP_FILE"
+  fi
+done < "$PEERS_DIR/metadata.csv"
+echo "  }" >> "$EXP_FILE"
+echo "}" >> "$EXP_FILE"
+# Reload nftables only NAT table
+nft -f /etc/nftables.conf
 EOF
+  chmod +x /usr/local/bin/expiry_check.sh
 
-  cat > /etc/systemd/system/quota-reset.service <<EOF
-[Unit]
-Description=Reset monthly VPN quotas
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/reset_quotas.sh
-EOF
-
-  cat > /etc/systemd/system/quota-reset.timer <<EOF
-[Unit]
-Description=Monthly quota reset
-
-[Timer]
-OnCalendar=monthly
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-
-  systemctl enable peer-expire.timer quota-reset.timer
+  # cron jobs
+  echo "0 0 1 * * root /usr/local/bin/quota_reset.sh" > /etc/cron.d/quota_reset
+  echo "0 1 * * * root /usr/local/bin/expiry_check.sh" > /etc/cron.d/expiry_check
 }
 
 # --- Peer Management ---
@@ -322,7 +283,7 @@ main_install() {
   configure_tc
   configure_landingpage
   configure_backup_scripts
-  configure_timers
+  configure_timer_scripts
   echo "Installation & Basis-Konfiguration abgeschlossen"
 }
 
@@ -336,7 +297,7 @@ show_menu() {
   echo "4) Backup wiederherstellen"
   echo "5) Geo-IP-Blacklist anpassen"
   echo "6) Manuelle Blacklist bearbeiten"
-  echo "7) Konfiguration erneut anwenden (nft, tc, nginx)"
+  echo "7) Konfiguration neu laden (nft, tc, nginx)"
   echo "8) Beenden"
   read -p "Wahl [1-8]: " opt
   case $opt in
@@ -346,7 +307,7 @@ show_menu() {
     4) read -p "Backup-Datei: " b; /usr/local/bin/restore_vpn.sh "$b";;
     5) ${EDITOR:-vi} "$GEO_BLACKLIST_FILE"; systemctl restart nftables;;
     6) ${EDITOR:-vi} "$MANUAL_BLACKLIST_FILE"; systemctl restart AdGuardHome;;
-    7) systemctl restart nftables AdGuardHome nginx tc; echo "Konfig neu geladen";;
+    7) systemctl restart nftables nginx; configure_tc; echo "Konfig neu geladen";;
     8) exit 0;;
     *) echo "Ungültig"; sleep 1;;
   esac
