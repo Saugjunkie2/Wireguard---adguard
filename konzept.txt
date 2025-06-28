@@ -1,0 +1,65 @@
+Konsolidiertes Konzept (inkl. Skalierung)
+
+    Bare-Metal-Server & Grundkonfiguration
+
+        Debian 12, WireGuard wg0 (IPv4+IPv6), Kill-Switch, Unbound + DNSSEC → AdGuard Home.
+
+    Gruppen, Quotas & Ablauf
+
+        Vier /26-Subnets (Guest, Member, VIP, Admin) mit Isolation.
+
+        Speed-Shaping & monatliche Volumen-Quotas.
+
+        12-Monate-Gratis-Peers mit Ablaufdatum + interne Landingpage nach Ablauf.
+
+    AdGuard & manuelle Blacklist
+
+        Standard-Filter für Werbung/Tracker, Admin ohne Block.
+
+        Individuelle Sperre illegaler Domains per AdGuard.
+
+    Web-Portal & API
+
+        Dashboard für Peers, Verbrauch, Restlaufzeit & QR-Codes.
+
+        Admin-UI für Gruppen, Peers, manuelle Domain-Blacklist, Backup/Restore.
+
+        JWT/API-Key Authentifizierung + Rate-Limiting.
+
+    Monitoring, SIEM & Alerts
+
+        Prometheus / Grafana (Admin-Alerts bei ≥ 80 % Quota oder auffälligem Traffic).
+
+        SIEM-Logging für sicherheitsrelevante Events.
+
+    Geo-IP-Filterung
+
+        Länder-Blacklist via nftables oder AdGuard.
+
+    Automatisierung & Deployment
+
+        systemd-Timer / Cron: monatlicher Quota-Reset, täglicher Ablauf-Check, optional minütliches Traffic-Polling.
+
+        Installer-Script (Bash/Python) für WireGuard, Firewall, tc, Unbound, AdGuard, Timer.
+
+    Backup- und Wiederherstellungs-UI
+
+        Knopf im Admin-Portal für ad-hoc-Backups (Configs, Keys, DB-Dump) und Restore.
+
+    Tarif-Pakete & QR-Code
+
+        12 Monate Gratis + manuelle kostenpflichtige Quota-Pakete.
+
+        Automatische QR-Code-Generierung für jede Peer-Config.
+
+    Skalierung
+
+        Vertical Scaling: Server-Ressourcen (CPU, RAM, Storage) bei Bedarf kostenpflichtig per KVM-Upgrade erhöhen – ohne Neuinstallation.
+
+        Horizontale Erweiterung (optional):
+
+            Beim Überschreiten der Kapazitätsgrenze einen zweiten Bare-Metal-Server in Betrieb nehmen.
+
+            Gleiche Automatisierung/Installer-Scripts nutzen, um ihn identisch zu konfigurieren.
+
+            Namespace-Trennung oder Load-Balancing (nächstes Upgrade), z. B. mit einem Floating IP oder DNS-Round-Robin, um Last gleichmäßig zu verteilen.
