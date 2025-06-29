@@ -204,7 +204,7 @@ configure_tc() {
       fi
     done
   fi
-  cat > /usr/local/bin/configure_tc.sh <<'EOF'
+  cat > /usr/local/bin/configure_tc.sh <<EOF
 #!/usr/bin/env bash
 $(declare -f configure_tc)
 configure_tc
