@@ -204,11 +204,25 @@ configure_tc() {
       fi
     done
   fi
-  cat > /usr/local/bin/configure_tc.sh <<EOF
+}
+
+generate_tc_script() {
+  cat > /usr/local/bin/configure_tc.sh <<'EOF'
 #!/usr/bin/env bash
-$(declare -f configure_tc)
-configure_tc
+WG_IFACE="${WG_IFACE:-wg0}"
+tc qdisc del dev "$WG_IFACE" root 2>/dev/null || true
+tc qdisc add dev "$WG_IFACE" root handle 1: htb default 999
 EOF
+  for grp in "${!GROUP_NETS[@]}"; do
+    speed=${GROUP_SPEED[$grp]}
+    mark=$(case $grp in guest) echo 1;; member) echo 2;; vip) echo 3;; admin) echo 4;; esac)
+    if [[ $speed -gt 0 ]]; then
+      cat >> /usr/local/bin/configure_tc.sh <<EOF
+tc class add dev "\$WG_IFACE" parent 1: classid 1:$mark htb rate "${speed}"mbit ceil "${speed}"mbit burst 15k
+tc filter add dev "\$WG_IFACE" protocol ip parent 1: prio 1 handle $mark fw flowid 1:$mark
+EOF
+    fi
+  done
   chmod +x /usr/local/bin/configure_tc.sh
 }
 
@@ -330,6 +344,7 @@ EOF
 # --- Hauptinstallation ---
 main_install() {
   install_packages
+  generate_tc_script
   configure_tc
   configure_wireguard
   configure_unbound
@@ -362,7 +377,7 @@ show_menu() {
     4) read -r -p "Backup-Datei: " b; /usr/local/bin/restore_vpn.sh "$b";;
     5) ${EDITOR:-vi} "$GEO_BLACKLIST_FILE"; safe_systemctl restart nftables;;
     6) ${EDITOR:-vi} "$MANUAL_BLACKLIST_FILE"; safe_systemctl restart AdGuardHome;;
-    7) safe_systemctl restart nftables nginx; configure_tc; echo "Konfig neu geladen";;
+    7) safe_systemctl restart nftables nginx; generate_tc_script; configure_tc; echo "Konfig neu geladen";;
     8) exit 0;;
     *) echo "Ungültig"; sleep 1;;
   esac
