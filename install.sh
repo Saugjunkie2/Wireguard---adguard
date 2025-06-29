@@ -66,6 +66,13 @@ install_packages() {
 
 # --- WireGuard konfigurieren ---
 configure_wireguard() {
+  # Remove existing interface if present to allow reinstallation
+  if ip link show ${WG_IFACE} >/dev/null 2>&1; then
+    echo "Existing ${WG_IFACE} detected - removing old instance"
+    safe_systemctl stop wg-quick@${WG_IFACE} || true
+    wg-quick down ${WG_IFACE} || true
+    rm -f /etc/wireguard/${WG_IFACE}.conf
+  fi
   cat > /etc/wireguard/${WG_IFACE}.conf <<EOF
 [Interface]
 Address = ${VPN_IPV4}/26, ${WG_IPV6_BASE}::1/64
