@@ -107,19 +107,30 @@ EOF
 
 # --- AdGuard Home konfigurieren ---
 configure_adguard() {
-  # UI und DNS nur über VPN binden
-  sed -i "s|^bind_host:.*|bind_host: ${VPN_IPV4}|" /opt/AdGuardHome/AdGuardHome.yaml
-  sed -i "s|^bind_port:.*|bind_port: ${ADGUARD_UI_PORT}|" /opt/AdGuardHome/AdGuardHome.yaml
-  # DNS-Server
-  sed -i '/^dns:/,/^  upstream_dns:/d' /opt/AdGuardHome/AdGuardHome.yaml
-  cat >> /opt/AdGuardHome/AdGuardHome.yaml <<EOF
+  AGYML=/opt/AdGuardHome/AdGuardHome.yaml
+
+  # 1) Entferne die einzelne fehlerhafte Zeile
+  sed -i '/https:\/\/dns10\.quad9\.net\/dns-query/d' "$AGYML"
+
+  # 2) Lösche alten dns:-Block und alles bis (aber ohne) blocklists:
+  sed -i '/^dns:/,/^blocklists:/d' "$AGYML"
+
+  # 3) Füge den sauberen neuen DNS-Abschnitt und blocklists ein
+  cat >> "$AGYML" <<EOF
+
+# --- VPN-spezifischer DNS-Resolver ---
 dns:
   bind_hosts:
     - ${VPN_IPV4}
   port: ${ADGUARD_DNS_PORT}
   upstream_dns:
     - 127.0.0.1#${UNBOUND_PORT}
+
+blocklists:
+  - file:///etc/AdGuardHome/manual_blacklist.txt
 EOF
+
+  # 4) Neustart
   safe_systemctl enable AdGuardHome
   safe_systemctl restart AdGuardHome
 }
