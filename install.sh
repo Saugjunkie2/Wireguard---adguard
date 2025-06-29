@@ -128,33 +128,49 @@ EOF
 configure_nftables() {
   cat > /etc/nftables.conf <<EOF
 #!/usr/sbin/nft -f
-flush ruleset
+flush ruleset;
 
 # NAT-Tabelle für Ablauf/Expiry
 table ip nat {
-  chain prerouting { type nat hook prerouting priority 0; policy accept;
-    include "$EXPIRY_NFT_FILE"
+  chain prerouting {
+    type nat hook prerouting priority 0; policy accept;
+    # Ablauf-Umleitung auf die Landingpage
+    include "$EXPIRY_NFT_FILE";
+    # DNS-Zwang: umgeleitete Queries an AdGuard
+    tcp dport 53 redirect to :${ADGUARD_DNS_PORT};
+    udp dport 53 redirect to :${ADGUARD_DNS_PORT};
   }
-  chain postrouting { type nat hook postrouting priority 100; policy accept;
-    oifname "$HOST_IFACE" masquerade
+  chain postrouting {
+    type nat hook postrouting priority 100; policy accept;
+    # Masquerade auf das externe Interface
+    oifname "$HOST_IFACE" masquerade;
   }
 }
 
 # Haupt-Tabelle für VPN-Sicherheit
 table inet vpn {
-  chain input { type filter hook input priority 0; policy accept; }
-  chain output { type filter hook output priority 0; policy drop; }
+  chain input {
+    type filter hook input priority 0; policy accept;
+  }
+
+  chain output {
+    type filter hook output priority 0; policy drop;
+    # SSH von außen erlauben (über externes Interface)
+    ct state established,related accept;
+    oifname "$HOST_IFACE" tcp dport 22 accept;
+  }
+
   chain forward {
     type filter hook forward priority 0; policy accept;
-    # Kill-Switch
-    oifname "${WG_IFACE}" accept
-    # DNS-Zwang
-    tcp dport 53 redirect to :${ADGUARD_DNS_PORT}
-    udp dport 53 redirect to :${ADGUARD_DNS_PORT}
+
+    # Kill-Switch: nur wg0-Traffic erlauben
+    iifname "${WG_IFACE}" accept;
+
     # Geo-IP Blacklist
-    include "$GEO_BLACKLIST_FILE"
-    # Gruppen-Markierung, Isolation & Quota
-    include "/etc/nftables/groups.conf"
+    include "$GEO_BLACKLIST_FILE";
+
+    # Gruppen-Regeln (Marking/Isolation/Quota)
+    include "/etc/nftables/groups.conf";
   }
 }
 EOF
@@ -164,32 +180,36 @@ EOF
 # Hier CIDR-Blöcke eintragen, die gesperrt werden sollen
 EOF
 
-  # Gruppen.conf generieren
+  # Gruppen.conf generieren (nur reine Regeln mit Semikolon)
   cat > /etc/nftables/groups.conf <<EOF
 # Gruppe: Markierung, Isolation, Quota
 EOF
   for grp in "${!GROUP_NETS[@]}"; do
     cidr="${GROUP_NETS[$grp]}"
     base4="${WG_IPV4_BASE}.${cidr%%/*}"
-    # Markierung für QoS
     mark=$(case $grp in guest) echo 1;; member) echo 2;; vip) echo 3;; admin) echo 4;; esac)
-    echo "    ip saddr $base4/26 meta mark set $mark" >> /etc/nftables/groups.conf
+
+    # Markierung
+    echo "ip saddr $base4/26 meta mark set $mark;" >> /etc/nftables/groups.conf
+
     # Isolation gegen andere Gruppen
     for other in "${!GROUP_NETS[@]}"; do
       [[ "$other" == "$grp" ]] && continue
       other4="${WG_IPV4_BASE}.${GROUP_NETS[$other]%%/*}"
-      echo "    ip saddr $base4/26 ip daddr $other4/26 drop" >> /etc/nftables/groups.conf
+      echo "ip saddr $base4/26 ip daddr $other4/26 drop;" >> /etc/nftables/groups.conf
     done
-    # Quota-Regel
+
+    # Quota-Regeln
     quota=${GROUP_QUOTA[$grp]}
-    [[ $quota -gt 0 ]] && echo "    ip saddr $base4/26 quota $quota drop" >> /etc/nftables/groups.conf
+    [[ $quota -gt 0 ]] && echo "ip saddr $base4/26 quota over $quota bytes drop;" >> /etc/nftables/groups.conf
   done
 
   # Expiry-Datei initial leer
   cat > "$EXPIRY_NFT_FILE" <<EOF
-# Generiert von expiry_check.sh, dnat-Regeln für abgelaufene Peers
+# Generiert von expiry_check.sh, DNAT-Regeln für abgelaufene Peers
 EOF
 
+  # Service neu laden
   safe_systemctl enable nftables
   safe_systemctl restart nftables
 }
