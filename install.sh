@@ -144,16 +144,18 @@ table ip nat {
 table inet vpn {
   chain input { type filter hook input priority 0; policy accept; }
   chain output { type filter hook output priority 0; policy drop; }
-  chain forward { type filter hook forward priority 0; policy accept; }
-  # Kill-Switch
-  oifname "${WG_IFACE}" accept
-  # DNS-Zwang
-  tcp dport 53 redirect to :${ADGUARD_DNS_PORT}
-  udp dport 53 redirect to :${ADGUARD_DNS_PORT}
-  # Geo-IP Blacklist
-  include "$GEO_BLACKLIST_FILE"
-  # Gruppen-Markierung, Isolation & Quota
-  include "/etc/nftables/groups.conf"
+  chain forward {
+    type filter hook forward priority 0; policy accept;
+    # Kill-Switch
+    oifname "${WG_IFACE}" accept
+    # DNS-Zwang
+    tcp dport 53 redirect to :${ADGUARD_DNS_PORT}
+    udp dport 53 redirect to :${ADGUARD_DNS_PORT}
+    # Geo-IP Blacklist
+    include "$GEO_BLACKLIST_FILE"
+    # Gruppen-Markierung, Isolation & Quota
+    include "/etc/nftables/groups.conf"
+  }
 }
 EOF
 
