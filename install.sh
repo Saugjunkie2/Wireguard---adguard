@@ -48,15 +48,10 @@ install_packages() {
     wireguard nftables unbound iproute2 qrencode nginx curl wget iptables
 
   # AdGuard Home herunterladen & installieren
-  ADGUARD_DIR="/etc/adguard/AdGuardHome"
+  ADGUARD_DIR="/opt/AdGuardHome"
   [[ -x "$ADGUARD_DIR/AdGuardHome" ]] && return
-  tmpdir=$(mktemp -d)
-  curl -L https://static.adguard.com/adguardhome/release/AdGuardHome_linux_amd64.tar.gz -o "$tmpdir/adguard.tar.gz"
-  tar -xzf "$tmpdir/adguard.tar.gz" -C "$tmpdir"
-  mkdir -p /etc/adguard
-  mv "$tmpdir/AdGuardHome" "$ADGUARD_DIR"
-  "$ADGUARD_DIR/AdGuardHome" -s install
-  rm -rf "$tmpdir"
+  curl -s -S -L https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/master/scripts/install.sh \
+    | sh -s -- -v
   safe_systemctl enable AdGuardHome
   safe_systemctl start AdGuardHome
 
@@ -110,7 +105,7 @@ configure_adguard() {
   sed -i "s|^bind_port:.*|bind_port: ${ADGUARD_UI_PORT}|" /opt/AdGuardHome/AdGuardHome.yaml
   # DNS-Server
   sed -i '/^dns:/,/^  upstream_dns:/d' /opt/AdGuardHome/AdGuardHome.yaml
-  cat >> /etc/adguard/AdGuardHome/AdGuardHome.yaml <<EOF
+  cat >> /opt/AdGuardHome/AdGuardHome.yaml <<EOF
 dns:
   bind_hosts:
     - ${VPN_IPV4}
