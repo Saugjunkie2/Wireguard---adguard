@@ -25,7 +25,7 @@ BACKUP_DIR="/var/backups/vpn"
 LANDING_DIR="/var/www/expired"
 LOGFILE="/var/log/vpn_installer.log"
 PEERS_DIR="/etc/wireguard/peers"
-MANUAL_BLACKLIST_FILE="/etc/AdGuardHome/manual_blacklist.txt"
+MANUAL_BLACKLIST_FILE="/opt/AdGuardHome/manual_blacklist.txt"
 GEO_BLACKLIST_FILE="/etc/nftables/geo_blacklist.conf"
 EXPIRY_NFT_FILE="/etc/nftables/expiry_blacklist.conf"
 
@@ -95,11 +95,11 @@ EOF
 # --- AdGuard Home konfigurieren ---
 configure_adguard() {
   # UI und DNS nur über VPN binden
-  sed -i "s|^bind_host:.*|bind_host: ${VPN_IPV4}|" /etc/AdGuardHome/AdGuardHome.yaml
-  sed -i "s|^bind_port:.*|bind_port: ${ADGUARD_UI_PORT}|" /etc/AdGuardHome/AdGuardHome.yaml
+  sed -i "s|^bind_host:.*|bind_host: ${VPN_IPV4}|" /opt/AdGuardHome/AdGuardHome.yaml
+  sed -i "s|^bind_port:.*|bind_port: ${ADGUARD_UI_PORT}|" /opt/AdGuardHome/AdGuardHome.yaml
   # DNS-Server
-  sed -i '/^dns:/,/^  upstream_dns:/d' /etc/AdGuardHome/AdGuardHome.yaml
-  cat >> /etc/AdGuardHome/AdGuardHome.yaml <<EOF
+  sed -i '/^dns:/,/^  upstream_dns:/d' /opt/AdGuardHome/AdGuardHome.yaml
+  cat >> /opt/AdGuardHome/AdGuardHome.yaml <<EOF
 dns:
   bind_hosts:
     - ${VPN_IPV4}
@@ -226,7 +226,7 @@ configure_backup_scripts() {
 DEST="${BACKUP_DIR}/backup_$(date +%F_%H%M).tar.gz"
 tar czf "$DEST" \
   /etc/wireguard /etc/wireguard/peers /etc/unbound \
-  /etc/AdGuardHome /var/lib/AdGuardHome \
+  /opt/AdGuardHome /var/lib/AdGuardHome \
   /etc/nftables.conf /etc/nftables/geo_blacklist.conf /etc/nftables/groups.conf \
   /etc/nftables/expiry_blacklist.conf /etc/nginx/sites-available/expired
 echo "Backup gespeichert: $DEST"
