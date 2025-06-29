@@ -32,8 +32,9 @@ exec > >(tee -a "$LOGFILE") 2>&1
 
 # --- Paketinstallation ---
 install_packages() {
-  apt update
-  DEBIAN_FRONTEND=noninteractive apt install -y wireguard nftables unbound adguardhome tc iproute2 qrencode nginx curl
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard nftables unbound tc iproute2 qrencode nginx curl
+  install_adguard_home
   mkdir -p "$PEERS_DIR" "$BACKUP_DIR" "$LANDING_DIR" "/etc/nftables"
   touch "$MANUAL_BLACKLIST_FILE" "$GEO_BLACKLIST_FILE" "$PEERS_DIR/metadata.csv"
   # IP-Forwarding dauerhaft aktivieren
@@ -74,6 +75,16 @@ server:
 EOF
   systemctl enable unbound
   systemctl restart unbound
+}
+
+# --- AdGuard Home Installation ---
+install_adguard_home() {
+  [[ -x /usr/bin/AdGuardHome ]] && return
+  tmpdir=$(mktemp -d)
+  curl -L https://static.adguard.com/adguardhome/release/AdGuardHome_linux_amd64.tar.gz -o "$tmpdir/adguard.tar.gz"
+  tar -xzf "$tmpdir/adguard.tar.gz" -C "$tmpdir"
+  "$tmpdir/AdGuardHome/AdGuardHome" -s install
+  rm -rf "$tmpdir"
 }
 
 # --- AdGuard Home konfigurieren ---
