@@ -36,15 +36,15 @@ exec > >(tee -a "$LOGFILE") 2>&1
 install_packages() {
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    wireguard nftables unbound iproute2 qrencode nginx curl
+    wireguard nftables unbound iproute2 qrencode nginx curl wget
 
   # AdGuard Home herunterladen & installieren
-  AGH_VER=$(curl -s https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest \
-    | grep -Po '"tag_name": "\K.*?(?=")')
-  AGH_TAR="AdGuardHome_${AGH_VER#v}_linux_amd64.tar.gz"
-  wget -O "/tmp/$AGH_TAR" "https://github.com/AdguardTeam/AdGuardHome/releases/download/$AGH_VER/$AGH_TAR"
-  tar xzf "/tmp/$AGH_TAR" -C /opt
-  /opt/AdGuardHome/AdGuardHome -s install
+[[ -x /usr/bin/AdGuardHome ]] && return
+  tmpdir=$(mktemp -d)
+  curl -L https://static.adguard.com/adguardhome/release/AdGuardHome_linux_amd64.tar.gz -o "$tmpdir/adguard.tar.gz"
+  tar -xzf "$tmpdir/adguard.tar.gz" -C "$tmpdir"
+  "$tmpdir/AdGuardHome/AdGuardHome" -s install
+  rm -rf "$tmpdir"
   systemctl enable AdGuardHome
   systemctl start  AdGuardHome
   rm "/tmp/$AGH_TAR"
