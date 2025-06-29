@@ -4,7 +4,10 @@
 set -euo pipefail
 
 # --- Standard-Parameter (anpassbar im Menü) ---
-HOST_IFACE="ens18"
+# Falls keine Netzwerkschnittstelle vorgegeben ist, automatisch diejenige mit
+# dem Standardgateway ermitteln. Das vermeidet feste Namen wie "eth0" oder
+# "ens18", die auf verschiedenen Systemen variieren können.
+HOST_IFACE="${HOST_IFACE:-$(ip -o -4 route show to default | awk '{print $5; exit}')}"
 WG_IFACE="wg0"
 WG_IPV4_BASE="10.66.66"
 WG_IPV6_BASE="fd00:dead:beef"
