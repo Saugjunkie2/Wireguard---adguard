@@ -192,16 +192,18 @@ EOF
 
 # --- Traffic-Shaping (tc) ---
 configure_tc() {
-  tc qdisc del dev ${WG_IFACE} root 2>/dev/null || true
-  tc qdisc add dev ${WG_IFACE} root handle 1: htb default 999
-  for grp in "${!GROUP_NETS[@]}"; do
-    speed=${GROUP_SPEED[$grp]}
-    mark=$(case $grp in guest) echo 1;; member) echo 2;; vip) echo 3;; admin) echo 4;; esac)
-    if [[ $speed -gt 0 ]]; then
-      tc class add dev ${WG_IFACE} parent 1: classid 1:"$mark" htb rate "${speed}"mbit ceil "${speed}"mbit burst 15k
-      tc filter add dev ${WG_IFACE} protocol ip parent 1: prio 1 handle "$mark" fw flowid 1:"$mark"
-    fi
-  done
+  if ip link show ${WG_IFACE} >/dev/null 2>&1; then
+    tc qdisc del dev ${WG_IFACE} root 2>/dev/null || true
+    tc qdisc add dev ${WG_IFACE} root handle 1: htb default 999
+    for grp in "${!GROUP_NETS[@]}"; do
+      speed=${GROUP_SPEED[$grp]}
+      mark=$(case $grp in guest) echo 1;; member) echo 2;; vip) echo 3;; admin) echo 4;; esac)
+      if [[ $speed -gt 0 ]]; then
+        tc class add dev ${WG_IFACE} parent 1: classid 1:"$mark" htb rate "${speed}"mbit ceil "${speed}"mbit burst 15k
+        tc filter add dev ${WG_IFACE} protocol ip parent 1: prio 1 handle "$mark" fw flowid 1:"$mark"
+      fi
+    done
+  fi
   cat > /usr/local/bin/configure_tc.sh <<'EOF'
 #!/usr/bin/env bash
 $(declare -f configure_tc)
@@ -328,11 +330,11 @@ EOF
 # --- Hauptinstallation ---
 main_install() {
   install_packages
+  configure_tc
   configure_wireguard
   configure_unbound
   configure_adguard
   configure_nftables
-  configure_tc
   configure_landingpage
   # shellcheck disable=SC2119
   configure_backup_scripts
