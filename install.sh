@@ -45,7 +45,7 @@ safe_systemctl() {
 install_packages() {
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    wireguard nftables unbound iproute2 qrencode nginx curl wget
+    wireguard nftables unbound iproute2 qrencode nginx curl wget iptables
 
   # AdGuard Home herunterladen & installieren
   ADGUARD_DIR="/etc/adguard/AdGuardHome"
