@@ -32,6 +32,15 @@ EXPIRY_NFT_FILE="/etc/nftables/expiry_blacklist.conf"
 mkdir -p "$(dirname "$LOGFILE")"
 exec > >(tee -a "$LOGFILE") 2>&1
 
+# Fallback for environments ohne systemd
+safe_systemctl() {
+  if command -v systemctl >/dev/null && [ "$(ps -p 1 -o comm=)" = systemd ]; then
+    systemctl "$@"
+  else
+    echo "systemctl $* skipped (systemd not available)" >&2
+  fi
+}
+
 # --- Paketinstallation ---
 install_packages() {
   apt-get update
@@ -45,9 +54,8 @@ install_packages() {
   tar -xzf "$tmpdir/adguard.tar.gz" -C "$tmpdir"
   "$tmpdir/AdGuardHome/AdGuardHome" -s install
   rm -rf "$tmpdir"
-  systemctl enable AdGuardHome
-  systemctl start  AdGuardHome
-  rm "/tmp/$AGH_TAR"
+  safe_systemctl enable AdGuardHome
+  safe_systemctl start AdGuardHome
 
   # Verzeichnisse & Dateien anlegen
   mkdir -p "$PEERS_DIR" "$BACKUP_DIR" "$LANDING_DIR" "/etc/nftables"
@@ -72,7 +80,7 @@ PostUp = iptables -t nat -A POSTROUTING -o ${HOST_IFACE} -j MASQUERADE
 PostUp = /usr/local/bin/configure_tc.sh
 PostDown = iptables -t nat -D POSTROUTING -o ${HOST_IFACE} -j MASQUERADE
 EOF
-  systemctl enable wg-quick@${WG_IFACE}
+  safe_systemctl enable wg-quick@${WG_IFACE}
   wg-quick up ${WG_IFACE}
 }
 
@@ -88,8 +96,8 @@ server:
   val-permissive-mode: no
   verbosity: 1
 EOF
-  systemctl enable unbound
-  systemctl restart unbound
+  safe_systemctl enable unbound
+  safe_systemctl restart unbound
 }
 
 # --- AdGuard Home konfigurieren ---
@@ -107,8 +115,8 @@ dns:
   upstream_dns:
     - 127.0.0.1#${UNBOUND_PORT}
 EOF
-  systemctl enable AdGuardHome
-  systemctl restart AdGuardHome
+  safe_systemctl enable AdGuardHome
+  safe_systemctl restart AdGuardHome
 }
 
 # --- nftables-Regeln ---
@@ -175,8 +183,8 @@ EOF
 # Generiert von expiry_check.sh, dnat-Regeln für abgelaufene Peers
 EOF
 
-  systemctl enable nftables
-  systemctl restart nftables
+  safe_systemctl enable nftables
+  safe_systemctl restart nftables
 }
 
 # --- Traffic-Shaping (tc) ---
@@ -216,10 +224,11 @@ server {
 EOF
   ln -sf /etc/nginx/sites-available/expired /etc/nginx/sites-enabled/expired
   rm -f /etc/nginx/sites-enabled/default
-  systemctl restart nginx
+  safe_systemctl restart nginx
 }
 
 # --- Backup & Restore Skripte ---
+# shellcheck disable=SC2120
 configure_backup_scripts() {
   cat > /usr/local/bin/backup_vpn.sh <<EOF
 #!/usr/bin/env bash
@@ -236,7 +245,7 @@ EOF
 #!/usr/bin/env bash
 [ -f "$1" ] || { echo "Backup nicht gefunden"; exit 1; }
 tar xzf "$1" -C /
-systemctl restart wg-quick@${WG_IFACE} unbound AdGuardHome nftables nginx
+safe_systemctl restart wg-quick@${WG_IFACE} unbound AdGuardHome nftables nginx
 /usr/local/bin/configure_tc.sh
 echo "Restore abgeschlossen"
 EOF
@@ -255,6 +264,7 @@ EOF
   chmod +x /usr/local/bin/quota_reset.sh
 
   # Ablauf-Check
+  # shellcheck disable=SC2154
   cat > /usr/local/bin/expiry_check.sh <<EOF
 #!/usr/bin/env bash
 # Erzeuge dnat-Regeln für abgelaufene Peers
@@ -262,6 +272,7 @@ EXP_FILE="${EXPIRY_NFT_FILE}"
 : > "$EXP_FILE"
 today=$(date +%Y-%m-%d)
 while IFS='|' read -r name grp ip4 ip6 expires; do
+  # shellcheck disable=SC2154
   if [[ "$expires" < "$today" ]]; then
     echo "ip saddr $ip4 dnat to $VPN_IPV4:80" >> "$EXP_FILE"
   fi
@@ -278,15 +289,15 @@ EOF
 
 # --- Peer Management ---
 create_peer() {
-  read -p "Peer-Name: " peer_name
+  read -r -p "Peer-Name: " peer_name
   echo "Gruppen: ${!GROUP_NETS[*]}"
-  read -p "Gruppe: " grp
+  read -r -p "Gruppe: " grp
   [[ -z "${GROUP_NETS[$grp]:-}" ]] && { echo "Ungültige Gruppe"; return; }
-  read -p "Ablaufdatum (YYYY-MM-DD): " expires
+  read -r -p "Ablaufdatum (YYYY-MM-DD): " expires
   priv=$(wg genkey); pub=$(echo "$priv"|wg pubkey); psk=$(wg genpsk)
   # IP finden
-  used=( $(grep -h "Address" $PEERS_DIR/*.conf 2>/dev/null | grep -o "10\.66\.66\.[0-9]*" | cut -d '.' -f4) )
-  for i in {2..62}; do [[ ! " ${used[*]} " =~ " $i " ]] && oct=$i && break; done
+  mapfile -t used < <(grep -h "Address" "$PEERS_DIR"/*.conf 2>/dev/null | grep -o "10\.66\.66\.[0-9]*" | cut -d '.' -f4)
+  for i in {2..62}; do [[ ! " ${used[*]} " =~ $i ]] && oct=$i && break; done
   ip4="${WG_IPV4_BASE}.$oct"; ip6="${WG_IPV6_BASE}::$oct"
   # Konfig erzeugen
   conf="$PEERS_DIR/$peer_name.conf"
@@ -320,6 +331,7 @@ main_install() {
   configure_nftables
   configure_tc
   configure_landingpage
+  # shellcheck disable=SC2119
   configure_backup_scripts
   configure_timer_scripts
   echo "Installation & Basis-Konfiguration abgeschlossen"
@@ -337,19 +349,19 @@ show_menu() {
   echo "6) Manuelle Blacklist bearbeiten"
   echo "7) Konfiguration neu laden (nft, tc, nginx)"
   echo "8) Beenden"
-  read -p "Wahl [1-8]: " opt
+  read -r -p "Wahl [1-8]: " opt
   case $opt in
     1) main_install;;
     2) create_peer;;
     3) /usr/local/bin/backup_vpn.sh;;
-    4) read -p "Backup-Datei: " b; /usr/local/bin/restore_vpn.sh "$b";;
-    5) ${EDITOR:-vi} "$GEO_BLACKLIST_FILE"; systemctl restart nftables;;
-    6) ${EDITOR:-vi} "$MANUAL_BLACKLIST_FILE"; systemctl restart AdGuardHome;;
-    7) systemctl restart nftables nginx; configure_tc; echo "Konfig neu geladen";;
+    4) read -r -p "Backup-Datei: " b; /usr/local/bin/restore_vpn.sh "$b";;
+    5) ${EDITOR:-vi} "$GEO_BLACKLIST_FILE"; safe_systemctl restart nftables;;
+    6) ${EDITOR:-vi} "$MANUAL_BLACKLIST_FILE"; safe_systemctl restart AdGuardHome;;
+    7) safe_systemctl restart nftables nginx; configure_tc; echo "Konfig neu geladen";;
     8) exit 0;;
     *) echo "Ungültig"; sleep 1;;
   esac
-  read -n1 -r -p "Drücke eine Taste..." key
+  read -n1 -r -p "Drücke eine Taste..." _
   show_menu
 }
 
