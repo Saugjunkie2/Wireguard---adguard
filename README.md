@@ -50,6 +50,7 @@ Wir verfolgen folgende Hauptziele:
 
 * Vollständiges Bash‑Skript (`install.sh`) mit allen oben genannten Funktionen
 * Einbinden von AdGuard Home per offiziellem Service-Installer
+* Automatische Installation aller benötigten Pakete, inklusive `iptables`
 * Vollständige nftables-Konfiguration mit Syntax‑Checks und Service–Integration
 * Interaktives Menü mit Punkten für Installation, Peer-Erstellung, Backup/Restore, Blacklist‑Editing, Reload
 
