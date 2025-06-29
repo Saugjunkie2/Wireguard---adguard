@@ -66,7 +66,7 @@ Wir verfolgen folgende Hauptziele:
 1. Auf einem frischen Debian 12-Server als `root` kopieren:
 
    ```bash
-   wget https://github.com/Saugjunkie2/Wireguard---adguard/install.sh -O install.sh
+   curl  -O  https://raw.githubusercontent.com/Saugjunkie2/Wireguard---adguard/main/install.sh
    chmod +x install.sh
    ./install.sh
    ```
