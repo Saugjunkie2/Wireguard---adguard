@@ -25,7 +25,6 @@ BACKUP_DIR="/var/backups/vpn"
 LANDING_DIR="/var/www/expired"
 LOGFILE="/var/log/vpn_installer.log"
 PEERS_DIR="/etc/wireguard/peers"
-MANUAL_BLACKLIST_FILE="/opt/AdGuardHome/manual_blacklist.txt"
 GEO_BLACKLIST_FILE="/etc/nftables/geo_blacklist.conf"
 EXPIRY_NFT_FILE="/etc/nftables/expiry_blacklist.conf"
 
@@ -94,6 +93,7 @@ configure_unbound() {
   cat > /etc/unbound/unbound.conf <<EOF
 server:
   interface: 127.0.0.1
+  interface: ::1
   port: ${UNBOUND_PORT}
   do-ip4: yes
   do-ip6: yes
@@ -104,37 +104,6 @@ EOF
   safe_systemctl enable unbound
   safe_systemctl restart unbound
 }
-
-# --- AdGuard Home konfigurieren ---
-configure_adguard() {
-  AGYML=/opt/AdGuardHome/AdGuardHome.yaml
-
-  # 1) Entferne die einzelne fehlerhafte Zeile
-  sed -i '/https:\/\/dns10\.quad9\.net\/dns-query/d' "$AGYML"
-
-  # 2) Lösche alten dns:-Block und alles bis (aber ohne) blocklists:
-  sed -i '/^dns:/,/^blocklists:/d' "$AGYML"
-
-  # 3) Füge den sauberen neuen DNS-Abschnitt und blocklists ein
-  cat >> "$AGYML" <<EOF
-
-# --- VPN-spezifischer DNS-Resolver ---
-dns:
-  bind_hosts:
-    - ${VPN_IPV4}
-  port: ${ADGUARD_DNS_PORT}
-  upstream_dns:
-    - 127.0.0.1#${UNBOUND_PORT}
-
-blocklists:
-  - file:///etc/AdGuardHome/manual_blacklist.txt
-EOF
-
-  # 4) Neustart
-  safe_systemctl enable AdGuardHome
-  safe_systemctl restart AdGuardHome
-}
-
 # --- nftables-Regeln ---
 configure_nftables() {
   cat > /etc/nftables.conf <<EOF
