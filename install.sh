@@ -138,6 +138,11 @@ table inet vpn {
     # SSH von außen erlauben (über externes Interface)
     ct state established,related accept;
     oifname "$HOST_IFACE" tcp dport 22 accept;
+	# DNS für den Server erlauben
+	ip protocol udp udp dport 53 accept
+	ip protocol tcp tcp dport 53 accept
+	# optional: HTTP/HTTPS für Updates o.Ä.
+	ip protocol tcp tcp dport {80,443} accept	
   }
 
   chain forward {
