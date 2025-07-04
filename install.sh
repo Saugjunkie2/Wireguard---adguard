@@ -25,6 +25,7 @@ BACKUP_DIR="/var/backups/vpn"
 LANDING_DIR="/var/www/expired"
 LOGFILE="/var/log/vpn_installer.log"
 PEERS_DIR="/etc/wireguard/peers"
+MANUAL_BLACKLIST_FILE="/opt/AdGuardHome/manual_blacklist.txt"
 GEO_BLACKLIST_FILE="/etc/nftables/geo_blacklist.conf"
 EXPIRY_NFT_FILE="/etc/nftables/expiry_blacklist.conf"
 
