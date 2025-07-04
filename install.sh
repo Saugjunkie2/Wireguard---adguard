@@ -261,19 +261,19 @@ EOF
 configure_backup_scripts() {
   cat > /usr/local/bin/backup_vpn.sh <<EOF
 #!/usr/bin/env bash
-DEST="${BACKUP_DIR}/backup_$(date +%F_%H%M).tar.gz"
-tar czf "$DEST" \
+DEST="${BACKUP_DIR}/backup_\$(date +%F_%H%M).tar.gz"
+tar czf "\$DEST" \
   /etc/wireguard /etc/wireguard/peers /etc/unbound \
   /opt/AdGuardHome /var/lib/AdGuardHome \
   /etc/nftables.conf /etc/nftables/geo_blacklist.conf /etc/nftables/groups.conf \
   /etc/nftables/expiry_blacklist.conf /etc/nginx/sites-available/expired
-echo "Backup gespeichert: $DEST"
+echo "Backup gespeichert: \$DEST"
 EOF
   chmod +x /usr/local/bin/backup_vpn.sh
   cat > /usr/local/bin/restore_vpn.sh <<EOF
 #!/usr/bin/env bash
-[ -f "$1" ] || { echo "Backup nicht gefunden"; exit 1; }
-tar xzf "$1" -C /
+[ -f "\$1" ] || { echo "Backup nicht gefunden"; exit 1; }
+tar xzf "\$1" -C /
 safe_systemctl restart wg-quick@${WG_IFACE} unbound AdGuardHome nftables nginx
 /usr/local/bin/configure_tc.sh
 echo "Restore abgeschlossen"
@@ -298,12 +298,11 @@ EOF
 #!/usr/bin/env bash
 # Erzeuge dnat-Regeln für abgelaufene Peers
 EXP_FILE="${EXPIRY_NFT_FILE}"
-: > "$EXP_FILE"
-today=$(date +%Y-%m-%d)
+: > "\$EXP_FILE"
+today=\$(date +%Y-%m-%d)
 while IFS='|' read -r name grp ip4 ip6 expires; do
-  # shellcheck disable=SC2154
-  if [[ "$expires" < "$today" ]]; then
-    echo "ip saddr $ip4 dnat to $VPN_IPV4:80" >> "$EXP_FILE"
+  if [[ "\$expires" < "\$today" ]]; then
+    echo "ip saddr \$ip4 dnat to $VPN_IPV4:80" >> "\$EXP_FILE"
   fi
 done < "$PEERS_DIR/metadata.csv"
 # Reload nftables only NAT table
