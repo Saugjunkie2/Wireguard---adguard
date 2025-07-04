@@ -358,7 +358,6 @@ main_install() {
   configure_tc
   configure_wireguard
   configure_unbound
-  configure_adguard
   configure_nftables
   configure_landingpage
   # shellcheck disable=SC2119
