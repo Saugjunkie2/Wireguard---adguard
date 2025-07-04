@@ -143,7 +143,10 @@ table inet vpn {
 	ip protocol udp udp dport 53 accept
 	ip protocol tcp tcp dport 53 accept
 	# optional: HTTP/HTTPS für Updates o.Ä.
-	ip protocol tcp tcp dport {80,443} accept	
+	ip protocol tcp tcp dport {80,443} accept
+        oifname "lo" accept
+        ip protocol udp udp dport {5335,5353} accept
+        ip protocol tcp tcp dport {5335,5353} accept	
   }
 
   chain forward {
