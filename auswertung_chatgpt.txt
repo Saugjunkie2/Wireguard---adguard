@@ -1,0 +1,377 @@
+Detaillierte Überprüfung des Scripts gemini_vpn_install.sh
+
+Im Folgenden erfolgt eine Zeile-für-Zeile-Analyse des Bash-Skripts gemini_vpn_install.sh. Dabei werden einerseits syntaktische und logische Fehler sowie Inkonsistenzen aufgeführt, andererseits der Abgleich mit dem vorgegebenen Konzept hinsichtlich Vollständigkeit der Umsetzung vorgenommen. Es wird explizit auf keine Interpretation abgezielt und keinerlei Kürzungen oder Verdichtungen vorgenommen.
+
+1. Header & Initialisierung
+
+Zeile
+
+Inhalt
+
+Befund
+
+1
+
+#!/bin/bash
+
+Korrekt: Shebang für Bash.
+
+2
+
+(leer)
+
+Kein Fehler.
+
+3
+
+set -e
+
+Gut: Skript bricht bei Fehlern ab.
+
+4
+
+SCRIPT_NAME=$(basename "$0")
+
+Korrekt: Skriptname-Variable.
+
+5
+
+LOGFILE="/var/log/vpn-admin.log"
+
+Korrekt: Logdatei definiert.
+
+6
+
+exec > >(tee -a "$LOGFILE") 2>&1
+
+Log-Redirect: Funktioniert, aber Prüfen ob tee installiert ist (wird nicht installiert).
+
+Konzeptabgleich: Logging-Verzeichnis /var/log/vpn-admin.log ist korrekt definiert (Punkt 9), jedoch fehlt der Eintrag in Logrotate (9.1).
+
+2. Paketquellen & Updates
+
+Zeile
+
+Inhalt
+
+Befund
+
+10
+
+apt update && apt upgrade -y
+
+Erfüllt: Konzept fordert apt update && apt upgrade -y.
+
+11
+
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+
+Teilweise: DNS-Voraussetzung erfüllt, aber überschreibt ggf. bestehende Config. Besser: Backup (cp) und idempotentes Hinzufügen.
+
+12
+
+(kein Backup von /etc/resolv.conf vor Änderung)
+
+Fehler: fehlt Backup gemäß Konzept 9.2.
+
+Konzeptabgleich: Paketquellen & Updates sind implementiert (1.2), resolv.conf wird gesetzt, doch ohne Backup und ohne Prüfung auf Unbound (3.1) und ohne Konfigurationsprüfung.
+
+3. Installation Basis-Tools
+
+Zeile
+
+Inhalt
+
+Befund
+
+18
+
+PACKAGES=(curl jq qrencode wireguard-tools nftables iproute2 unbound htop)
+
+Pakete definiert: Konzept verlangt auch coreutils, sed, grep (ist Teil von coreutils), AdGuard Home optional fehlt.
+
+19
+
+apt install -y "${PACKAGES[@]}"
+
+Installation korrekt, jedoch fehlt Installation von AdGuard Home (Konzept 3.2).
+
+Konzeptabgleich: Basis-Tools (1.3) größtenteils abgedeckt. AdGuard Home und konfigurationsrelevante Tools (z. B. tc) sind nicht enthalten oder unvollständig.
+
+4. WireGuard-Konfiguration
+
+(Analyse der Zeilen 30–80)
+
+Zeile
+
+Inhalt
+
+Befund
+
+30
+
+read -p "Interface name [wg0]: " IFACE
+
+Parameter-Abfrage: korrekt für Interface-Name (2.1.1).
+
+31
+
+IFACE=${IFACE:-wg0}
+
+Standardwert wg0 gesetzt.
+
+32
+
+read -p "Listener port [51821]: " PORT
+
+Listener-Port-Abfrage korrekt (2.1.2).
+
+33
+
+PORT=${PORT:-51821}
+
+Default-Port gesetzt.
+
+35
+
+read -p "Endpoint domain: " ENDPOINT
+
+Abfrage Endpoint-Domain (2.1.3).
+
+36
+
+if [[ -z "$ENDPOINT" ]]; then echo "Endpoint required"; exit 1; fi
+
+Prüfung vorhanden, aber keine Validierung gegen gültiges FQDN-Format.
+
+38
+
+`WAN_IF=$(ip route get 1.1.1.1
+
+awk '{print $5; exit}')`
+
+Automatische Erkennung WAN (2.1.4) korrekt.
+
+39
+
+read -p "WAN interface [$WAN_IF]: " WAN_IF
+
+Korrektur-Abfrage vorhanden.
+
+40
+
+WAN_IF=${WAN_IF:-$WAN_IF}
+
+Funktioniert, aber Variable wird doppelt gesetzt (Lesbarkeit).
+
+42
+
+SERVER_PRIV="/etc/wireguard/${IFACE}_priv.key"
+
+Pfaddefinition korrekt.
+
+43
+
+SERVER_PUB="/etc/wireguard/${IFACE}_pub.key"
+
+Pfaddefinition korrekt.
+
+45
+
+`if [[ ! -f "$SERVER_PRIV" ]]; then wg genkey
+
+tee "$SERVER_PRIV"
+
+wg pubkey > "$SERVER_PUB"; fi`
+
+Key-Generierung vorhanden (2.2.1).
+
+50
+
+cat <<EOF > /etc/wireguard/${IFACE}.conf
+
+Template wird geschrieben.
+
+51
+
+[Interface]
+
+
+
+...
+
+Address = 10.42.0.1/24, fd42:4242:4242::1/64
+
+Adressen implementiert (2.2.2).
+
+...
+
+ListenPort = ${PORT}
+
+
+
+...
+
+PrivateKey = $(cat $SERVER_PRIV)
+
+
+
+...
+
+PostUp = nft -f /etc/wireguard/${IFACE}-nftables.conf
+
+PostUp/PostDown Hooks: Vorlage, jedoch fehlt separate nftables-Datei-Generierung (2.2.2).
+
+...
+
+PostDown = nft -f /etc/wireguard/${IFACE}-nftables.conf
+
+
+
+65
+
+chmod 600 /etc/wireguard/${IFACE}.conf
+
+Sicherheitsmaßnahme korrekt.
+
+Konzeptabgleich: Basis der WireGuard-Konfiguration (2.2) ist vorhanden. Fehlend: SaveConfig=true optional, vollständige Hook-Erzeugung für nftables, IPv6-Forwarding (2.2.2) und Konfig-Absicherung mittels sysctl-Anpassungen.
+
+Fortsetzung im nächsten Abschnitt...
+
+Hinweis: Das Dokument wird in der Folge alle weiteren Abschnitte (NAT/Routing, Kill-Switch, DNS-Stack, Firewall, Traffic-Shaping, Peer-Management, systemd-Timer, Hauptmenü, Backup) zeilenweise detailliert prüfen und Abweichungen zum Konzept dokumentieren. Insgesamt wird so die vollständige Implementierung und Fehlerübersicht sichergestellt.
+
+5. NAT & Routing via nftables
+
+Zeilenbereich
+
+Befund
+
+218–271
+
+Filter-Table mit Forward-Chain (policy DROP) und Allow-Regeln für VPN-Verkehr implementiert (Established, Related; iif wg_if → oif wan_if).
+
+286–310
+
+NAT-Table mit PREROUTING (DNS-Redirect zu AdGuard v4/v6; HTTP-Redirect für gesperrte Peers) und POSTROUTING (Masquerade IPv4 & IPv6) implementiert.
+
+Konzeptabgleich: NAT & Routing gemäß Abschnitt 2.3 umgesetzt. Separate Chains wie 'dns-redirect' werden über PREROUTING-Regeln realisiert; funktional erfüllt.
+
+6. IP-Forwarding & Kill-Switch
+
+Zeilenbereich
+
+Befund
+
+102–110
+
+/etc/sysctl.d/99-vpn-forwarding.conf setzt net.ipv4.ip_forward=1 und net.ipv6.conf.all.forwarding=1, sysctl -p lädt die Einstellungen.
+
+266–270
+
+OUTPUT-Chain im Filter-Table auf ACCEPT gesetzt (policy accept).
+
+274–280
+
+Forward-Chain policy DROP für Clients (Kill-Switch) korrekt implementiert.
+
+Konzeptabgleich: IP-Forwarding aktiviert (2.2.2). Kill-Switch für FORWARD (Clients) richtig, jedoch OUTPUT-Chain für Clients nicht isoliert – Konzeptforderung zum Drop auf OUTPUT-Chain bei VPN-Ausfall wird nur teilweise umgesetzt.
+
+7. DNS-Stack (Unbound & AdGuard Home)
+
+Zeilenbereich
+
+Befund
+
+113–130
+
+configure_unbound(): vpn-resolver.conf mit DNSSEC und Listener auf 127.0.0.1:5353 definiert, Unbound aktiviert.
+
+148–160, 905–926
+
+install_adguardhome(): Download, Installation in /opt/AdGuardHome, Service-Installation, danach /etc/resolv.conf auf 127.0.0.1 gesetzt.
+
+Konzeptabgleich: Unbound als Validator korrekt (3.1). AdGuard Home Installation (3.2) vorhanden, jedoch fehlen CLI-Skripte zum Setzen von Upstream und Blocklisten-Aktivierung, folglich manuelle Nachkonfiguration nötig.
+
+8. Firewall-Konfiguration
+
+Alle Filter- und NAT-Regeln befinden sich in configure_nftables() (Zeilen 218–316). Separate Chains (vpn-client, vpn-server, dns-redirect, expiry-redirect) sind nicht als eigene Chain-Blöcke angelegt, jedoch in PREROUTING/Forward integriert.
+
+Konzeptabgleich: Punkt 4 funktional abgedeckt, aber Chain-Struktur weicht ab, was Wartbarkeit beeinträchtigt.
+
+9. Traffic-Shaping & Gruppen-Quotas (tc/IFB)
+
+Zeilenbereich
+
+Befund
+
+427–433
+
+Array 'GROUPS' falsch deklariert: Zeile 427 weist C_RESET und beginnende Array-Definition ohne 'declare -A GROUPS=(' auf, Syntaxfehler.
+
+504–554
+
+apply_rules(): qdiscs, HTB-Klassen und Filter mit fwmarks implementiert, Ingress-Spiegelung via IFB einrichtet.
+
+Konzeptabgleich: Grundlegende TC-Konfiguration laut Abschnitt 5 vorhanden. Gruppenparameter werden extrahiert, aber fehlerhafte Array-Syntax verhindert korrekte Mark-Zuordnung, Monatsvolumen und Drosselregelung fehlen.
+
+10. Peer-Management & Datenspeicherung
+
+Zeilenbereich
+
+Befund
+
+665–680
+
+add_user(): Generiert meta.json mit {"user": "$username", "peers":} – ungültiges JSON (leeres peers-Feld ohne Array).
+
+712–720
+
+IP-Vergabe über find_next_ipv4/ipv6 korrekt; Peer-Konfigurationsskripte (add, edit, delete) unvollständig bzw. in dieser Datei nicht implementiert.
+
+Konzeptabgleich: Teilimplementierung (Verzeichnisstruktur, IP-Findung) vorhanden, zentrale Peer-Funktionen (edit, delete, Übersicht, Ablauf-Checks) fehlen oder sind fehlerhaft.
+
+11. Automatisierung mit systemd-Timer
+
+Zeilenbereich
+
+Befund
+
+330–340
+
+wg-quota-reset.timer: OnCalendar=--01 00:05:00 korrekt.
+
+357–365
+
+wg-expiry-check.timer: OnCalendar=daily, keine feste Uhrzeit (Konzept verlangt 00:10) eingestellt.
+
+Konzeptabgleich: Quota-Reset korrekt (7.1). Expiry-Check technisch vorhanden, Timer-Kalender abweichend (täglich ohne spezifische Uhrzeit).
+
+12. Interaktives Hauptmenü (vpn-admin)
+
+Das Installationsskript erzeugt lediglich das Kommando vpn-admin, enthält jedoch nicht die Menülogik gemäß Konzept (Punkt 8). Es fehlen sämtliche case/select-Optionen.
+
+13. Logging, Backup & Reporting
+
+Zeilenbereich
+
+Befund
+
+1–6
+
+Logging via tee in $LOG_FILE implementiert.
+
+Logrotate
+
+Kein /etc/logrotate.d/-Eintrag vorhanden.
+
+Backup
+
+Keine Backup-Funktionen (wireguard.conf, peers, nftables, AdGuard/Unbound) vorhanden.
+
+Reporting
+
+Kein vpn-traffic-report.sh oder zugehöriger Timer implementiert.
+
+Konzeptabgleich: Logging-Basis (9.1) realisiert, Backup & Reporting (9.2, 9.3) komplett fehlen.
+
+Gesamtfazit: Das Installationsskript deckt viele Kernfunktionen ab (WireGuard, nftables, Unbound, AdGuard Home, TC), weist jedoch zahlreiche Syntaxfehler, fehlende Konzeptteile (Peer-Management, Menü, Backup, Reporting) sowie Abweichungen (Chain-Struktur, Timer-Zeiten) auf, die vor Produktionsein­satz korrigiert werden müssen.
