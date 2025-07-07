@@ -77,6 +77,18 @@ Wir verfolgen folgende Hauptziele:
    * Landingpage: `http://10.66.66.1:80` (für abgelaufene Peers)
 3. Im CLI‑Menü Peers anlegen, Quotas prüfen und Blacklists verwalten.
 
+## Konfiguration
+
+Die Firewall erlaubt nun zusätzlich den Loopback‑Verkehr sowie Zugriffe auf die
+DNS‑Ports `5335` (Unbound) und `5353` (AdGuard). Die relevanten Regeln finden
+sich in `install.sh` innerhalb der Funktion `configure_nftables`:
+
+```nft
+oifname "lo" accept
+ip protocol udp udp dport {5335,5353} accept
+ip protocol tcp tcp dport {5335,5353} accept
+```
+
 ## Lizenz
 
 MIT © DeinName
